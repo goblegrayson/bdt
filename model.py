@@ -119,17 +119,43 @@ class BlackDermanToy:
                 price_exp = 0.5 * (price_up + price_down)
                 r_local = rate_tree[i_node, i_step]
                 price_tree[i_node, i_step] = self.calc_discounted_price(price_exp, dt, r_local)
-        return price_tree[0, 0]
+        return price_tree[0, 0], price_tree
 
     def quote_tbond(self, maturity, par, coupon, coupons_per_year=2):
         # Decompose the tbond into a zero for the principle maturity and final coupon plus a zero for all other coupons sum the prices of each.
-        price = self.quote_zero(maturity, par + par * coupon)
+        price, price_tree = self.quote_zero(maturity, par + par * coupon)
         dt_coupon = 1 / coupons_per_year
         for i_coupon in range(maturity * coupons_per_year - 1):
             coupon_maturity = dt_coupon + dt_coupon * i_coupon
-            price += self.quote_zero(coupon_maturity, par * coupon)
-        return price
+            this_price, this_price_tree = self.quote_zero(coupon_maturity, par * coupon)
+            price += this_price
+            n_pad_right = np.size(price_tree, 0) - np.size(this_price_tree, 0)
+            n_pad_bottom = np.size(price_tree, 1) - np.size(this_price_tree, 1)
+            price_tree = price_tree + np.pad(this_price_tree, ((0, n_pad_right), (0, n_pad_bottom)), 'constant')
+        return price, price_tree
 
+    def quote_toption(self, maturity, par, coupon, option_expiration, strike, is_call, is_american=False, coupons_per_year=2):
+        # Generate a price tree for the underlying
+        _, bond_price_tree = BDT.quote_tbond(maturity, par, coupon, coupons_per_year)
+        # Now remove accrued interest
+        acc_interest = np.ones((np.size(bond_price_tree, 0), np.size(bond_price_tree, 1))) * par * coupon
+        acc_interest[bond_price_tree == 0] = 0
+        acc_interest[0, 0] = 0
+        bond_price_tree -= acc_interest
+        # Build a tree with the expiry prices
+        option_price_tree = np.zeros((option_expiration + 1, option_expiration + 1))
+        for i_node in range(option_expiration + 1):
+            if is_call:
+                node_price = bond_price_tree[i_node, option_expiration] - strike
+            else:
+                node_price = strike - bond_price_tree[i_node, option_expiration]
+            node_price = np.max((node_price, 0))
+            option_price_tree[i_node, option_expiration] = node_price
+        # Discount back to the first node
+        for i_step in range(option_expiration - 1, -1, -1):
+            for i_node in range(i_step + 1):
+                option_price_tree[i_node, i_step] = 0.5 * (option_price_tree[i_node, i_step + 1] + option_price_tree[i_node + 1, i_step + 1]) / (1 + self.rate_tree[i_node, i_step])
+        return option_price_tree[0, 0]
 
 if __name__ == '__main__':
     # Create a test term structure
@@ -154,6 +180,13 @@ if __name__ == '__main__':
     assert np.isclose(BDT.rate_tree, expected_rate_tree, 1e-3).all()
     # Now use the tbond from figure G of the original paper to ensure we can quote bond prices
     expected_bond_price = 95.51
-    calculated_bond_price = BDT.quote_tbond(3, 100, 0.1, 1)
+    calculated_bond_price, _ = BDT.quote_tbond(3, 100, 0.1, 1)
     assert np.isclose(expected_bond_price, calculated_bond_price, 1e-2)  # Bit of round-off error here I think
+    # Now use the example 3 year tbond to quote a bond call and bond put
+    expected_call_price = 1.770
+    calculated_call_price = BDT.quote_toption(3, 100, 0.1, 2, 95., True, False, 1)
+    assert np.isclose(expected_call_price, calculated_call_price, 1e-2)
+    expected_put_price = 0.57
+    calculated_put_price = BDT.quote_toption(3, 100, 0.1, 2, 95., False, False, 1)
+    assert np.isclose(expected_put_price, calculated_put_price, 1e-2)
 
