@@ -135,8 +135,9 @@ class BlackDermanToy:
         return price, price_tree
 
     def quote_toption(self, maturity, par, coupon, option_expiration, strike, is_call, is_american=False, coupons_per_year=2):
+        # Todo = add american options
         # Generate a price tree for the underlying
-        _, bond_price_tree = BDT.quote_tbond(maturity, par, coupon, coupons_per_year)
+        _, bond_price_tree = self.quote_tbond(maturity, par, coupon, coupons_per_year)
         # Now remove accrued interest
         acc_interest = np.ones((np.size(bond_price_tree, 0), np.size(bond_price_tree, 1))) * par * coupon
         acc_interest[bond_price_tree == 0] = 0
@@ -156,6 +157,7 @@ class BlackDermanToy:
             for i_node in range(i_step + 1):
                 option_price_tree[i_node, i_step] = 0.5 * (option_price_tree[i_node, i_step + 1] + option_price_tree[i_node + 1, i_step + 1]) / (1 + self.rate_tree[i_node, i_step])
         return option_price_tree[0, 0]
+
 
 if __name__ == '__main__':
     # Create a test term structure
@@ -189,4 +191,5 @@ if __name__ == '__main__':
     expected_put_price = 0.57
     calculated_put_price = BDT.quote_toption(3, 100, 0.1, 2, 95., False, False, 1)
     assert np.isclose(expected_put_price, calculated_put_price, 1e-2)
+    # Add stuff for american options and for hedge ratios
 
